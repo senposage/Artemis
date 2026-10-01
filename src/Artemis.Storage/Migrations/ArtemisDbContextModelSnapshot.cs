@@ -186,6 +186,10 @@ namespace Artemis.Storage.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("IdentifierAliases")
                         .IsRequired()
                         .HasColumnType("TEXT");

@@ -142,8 +142,7 @@ internal class DeviceService : IDeviceService
                     bool wasHidden;
                     lock (_devicesLock)
                     {
-                        retained = _devices.Concat(_retainedDevices).FirstOrDefault(d => IsSameProvider(d.DeviceProvider, deviceProvider) &&
-                                                                                        d.Identifier == identifier);
+                        retained = FindDeviceByKnownIdentifier(deviceProvider, identifier);
                         // A provider can replace a device's runtime identity while a physical device is absent. In
                         // that case retain the existing Artemis device and its bindings rather than adding a duplicate.
                         // Signatures are provider-defined and treated as opaque by the core.
@@ -159,6 +158,7 @@ internal class DeviceService : IDeviceService
                             retained.Disconnect();
                         }
                         bool topologyPreserved = retained.Rebind(rgbDevice, deviceProvider);
+                        RecordReconnectedIdentity(retained, identifier, reconnectionSignature);
                         ActivateRetainedDevice(retained);
                         reconnectedDevices.Add((retained, topologyPreserved, wasHidden));
                     }
@@ -449,6 +449,25 @@ internal class DeviceService : IDeviceService
                 _logger.Information("Migrated device identity {LegacyIdentifier} to provider identity {Identifier}", oldIdentifier, deviceIdentifier);
         }
 
+        if (deviceEntity == null)
+        {
+            List<DeviceEntity> aliasCandidates;
+            lock (_devicesLock)
+                aliasCandidates = _missingStoredDevices.Where(entity =>
+                    entity.DeviceProvider == deviceProvider.Plugin.Guid.ToString() &&
+                    entity.IdentifierAliases.Contains(deviceIdentifier)).ToList();
+
+            if (aliasCandidates.Count == 1)
+            {
+                deviceEntity = aliasCandidates[0];
+                _logger.Information("Reconciled provider runtime identity {Identifier} to stored logical device {StoredIdentifier} using a saved identifier alias",
+                    deviceIdentifier, deviceEntity.Id);
+            }
+            else if (aliasCandidates.Count > 1)
+                _logger.Warning("Found {Count} saved devices claiming runtime identity {Identifier}; not guessing which one owns it",
+                    aliasCandidates.Count, deviceIdentifier);
+        }
+
         if (deviceEntity == null && !string.IsNullOrWhiteSpace(reconnectionSignature))
         {
             List<DeviceEntity> candidates;
@@ -477,8 +496,11 @@ internal class DeviceService : IDeviceService
         if (deviceEntity != null)
         {
             bool signatureChanged = deviceEntity.ReconnectionSignature != reconnectionSignature;
-            bool identifierAliasChanged = !deviceEntity.IdentifierAliases.Contains(deviceIdentifier);
+            int identifierAliasCount = deviceEntity.IdentifierAliases.Count;
+            string? displayName = GetStoredDisplayName(rgbDevice);
+            bool displayNameChanged = deviceEntity.DisplayName != displayName;
             deviceEntity.ReconnectionSignature = reconnectionSignature;
+            deviceEntity.DisplayName = displayName;
             bool claimedStoredDevice;
             lock (_devicesLock)
             {
@@ -496,7 +518,7 @@ internal class DeviceService : IDeviceService
             if (legacyIdentifier != deviceIdentifier)
                 device.AddIdentifierAlias(legacyIdentifier);
 
-            if (signatureChanged || identifierAliasChanged)
+            if (signatureChanged || deviceEntity.IdentifierAliases.Count != identifierAliasCount || displayNameChanged)
                 _deviceRepository.Save(deviceEntity);
         }
         // Fall back on creating a new device
@@ -682,7 +704,7 @@ internal class DeviceService : IDeviceService
         bool wasHidden;
         lock (_devicesLock)
         {
-            existing = _devices.Concat(_retainedDevices).FirstOrDefault(d => IsSameProvider(d.DeviceProvider, deviceProvider) && d.Identifier == identifier);
+            existing = FindDeviceByKnownIdentifier(deviceProvider, identifier);
             // Reconcile every disconnected logical device, whether it is still visible during the removal grace
             // period or has already moved to Missing. The timer only affects presentation, never identity matching.
             existing ??= FindRetainedDeviceForReconnection(deviceProvider, reconnectionSignature, includeDisconnectedDevices: true);
@@ -705,12 +727,7 @@ internal class DeviceService : IDeviceService
             }
 
             bool topologyPreserved = existing.Rebind(rgbDevice);
-            bool identityChanged = existing.DeviceEntity.ReconnectionSignature != reconnectionSignature ||
-                                   !existing.DeviceEntity.IdentifierAliases.Contains(identifier);
-            existing.DeviceEntity.ReconnectionSignature = reconnectionSignature;
-            existing.AddIdentifierAlias(identifier);
-            if (identityChanged)
-                _deviceRepository.Save(existing.DeviceEntity);
+            RecordReconnectedIdentity(existing, identifier, reconnectionSignature);
             ActivateRetainedDevice(existing);
             if (wasHidden)
                 OnDeviceAdded(new DeviceEventArgs(existing));
@@ -768,6 +785,45 @@ internal class DeviceService : IDeviceService
         }
 
         return candidates.SingleOrDefault();
+    }
+
+    private ArtemisDevice? FindDeviceByKnownIdentifier(DeviceProvider provider, string identifier)
+    {
+        List<ArtemisDevice> devices = _devices.Concat(_retainedDevices)
+            .Where(device => IsSameProvider(device.DeviceProvider, provider)).ToList();
+        // Current identities win over history. An old runtime path may later be assigned
+        // to a different physical device, so only disconnected devices may claim aliases.
+        List<ArtemisDevice> exact = devices.Where(device =>
+            device.DeviceProvider.GetDeviceIdentifier(device.RgbDevice) == identifier).ToList();
+        if (exact.Count == 1)
+            return exact[0];
+        if (exact.Count > 1)
+            return null;
+
+        List<ArtemisDevice> aliases = devices.Where(device => !device.IsConnected && device.MatchesIdentifier(identifier)).ToList();
+        if (aliases.Count > 1)
+            _logger.Warning("Found {Count} disconnected devices claiming runtime identity {Identifier}; not guessing which one owns it",
+                aliases.Count, identifier);
+        return aliases.Count == 1 ? aliases[0] : null;
+    }
+
+    private void RecordReconnectedIdentity(ArtemisDevice device, string identifier, string? signature)
+    {
+        DeviceEntity entity = device.DeviceEntity;
+        string? displayName = GetStoredDisplayName(device.RgbDevice);
+        bool changed = entity.ReconnectionSignature != signature ||
+                       !entity.IdentifierAliases.Contains(identifier) || entity.DisplayName != displayName;
+        entity.ReconnectionSignature = signature;
+        entity.DisplayName = displayName;
+        device.AddIdentifierAlias(identifier);
+        if (changed)
+            _deviceRepository.Save(entity);
+    }
+
+    private static string? GetStoredDisplayName(IRGBDevice device)
+    {
+        string? name = device.DeviceInfo.DeviceName;
+        return string.IsNullOrWhiteSpace(name) ? null : name[..Math.Min(name.Length, 512)];
     }
 
     private void UpdateDeviceSnapshots()

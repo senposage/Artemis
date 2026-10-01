@@ -198,6 +198,48 @@ public class DeviceHotplugTests
     }
 
     [Fact]
+    public void StoredMissingDeviceIsClaimedByKnownAliasWhenSignatureChanges()
+    {
+        DeviceEntity stored = CreateEntity("test:runtime-path-a");
+        stored.DeviceProvider = TestArtemisProvider.PluginId;
+        stored.IdentifierAliases.Add("test:runtime-path-b");
+        stored.ReconnectionSignature = "old-topology";
+        IDeviceRepository repository = Substitute.For<IDeviceRepository>();
+        repository.GetAll().Returns([stored]);
+        DeviceService service = CreateDeviceService(repository);
+        repository.Get(Arg.Any<string>()).Returns((DeviceEntity?) null);
+        repository.Rename(Arg.Any<string>(), Arg.Any<string>()).Returns((DeviceEntity?) null);
+
+        service.AddDeviceProvider(new TestArtemisProvider(new TestRgbProvider(new TestRgbDevice("runtime-path-b", "new-topology"))) {IsEnabled = true});
+
+        Assert.Same(stored, Assert.Single(service.Devices).DeviceEntity);
+        Assert.Empty(service.MissingStoredDevices);
+        Assert.Equal("Identical test device", stored.DisplayName);
+        repository.DidNotReceive().Add(Arg.Any<DeviceEntity>());
+    }
+
+    [Fact]
+    public void ReplugUsesLastRuntimeIdentityEvenIfSignatureChangesAgain()
+    {
+        TestRgbDevice original = new("runtime-path-a", "signature-a");
+        TestRgbProvider rgbProvider = new(original);
+        DeviceService service = CreateDeviceService();
+        service.AddDeviceProvider(new TestArtemisProvider(rgbProvider) {IsEnabled = true});
+        ArtemisDevice logicalDevice = Assert.Single(service.Devices);
+
+        rgbProvider.Disconnect(original);
+        TestRgbDevice firstReplacement = new("runtime-path-b", "signature-a");
+        rgbProvider.Connect(firstReplacement);
+        rgbProvider.Disconnect(firstReplacement);
+        TestRgbDevice secondReplacement = new("runtime-path-b", "signature-b");
+        rgbProvider.Connect(secondReplacement);
+
+        Assert.Same(logicalDevice, Assert.Single(service.Devices));
+        Assert.Same(secondReplacement, logicalDevice.RgbDevice);
+        Assert.Equal("signature-b", logicalDevice.DeviceEntity.ReconnectionSignature);
+    }
+
+    [Fact]
     public void ObsoleteSplitChildIsNotLabeledMissingWhileParentIsPresent()
     {
         DeviceEntity obsoleteZone = CreateEntity("test:mainboard|zone:7");

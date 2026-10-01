@@ -19,12 +19,14 @@ public sealed class StoredDeviceSettingsViewModel
 
     public DeviceEntity DeviceEntity { get; }
     public string Identifier => DeviceEntity.Id;
+    public string DisplayName => string.IsNullOrWhiteSpace(DeviceEntity.DisplayName) ? "Saved device (name unavailable)" : DeviceEntity.DisplayName;
+    public string IdentityHint => Identifier.Length <= 96 ? Identifier : $"{Identifier[..48]}…{Identifier[^32..]}";
 
     public async Task ForgetDevice()
     {
         bool confirmed = await _windowService.ShowConfirmContentDialog(
             "Remove missing device",
-            $"Permanently remove {Identifier}? Its saved settings and all layer bindings will be deleted. This cannot be undone.",
+            $"Permanently remove {DisplayName} ({Identifier})? Its saved settings and all layer bindings will be deleted. This cannot be undone.",
             "Remove",
             "Cancel");
         if (confirmed)

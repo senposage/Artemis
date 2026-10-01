@@ -19,6 +19,10 @@ public class DeviceEntity
     [MaxLength(512)]
     public string DeviceProvider { get; set; } = string.Empty;
 
+    /// <summary>Last name reported by the provider, retained while the device is disconnected.</summary>
+    [MaxLength(512)]
+    public string? DisplayName { get; set; }
+
     /// <summary>Opaque provider-defined value used to reconcile a stored logical device after runtime identity replacement.</summary>
     [MaxLength(4096)]
     public string? ReconnectionSignature { get; set; }

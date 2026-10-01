@@ -40,8 +40,8 @@
                         <Border Classes="card" Padding="15" Margin="0 0 0 10">
                             <Grid ColumnDefinitions="*,Auto">
                                 <StackPanel>
-                                    <TextBlock FontWeight="SemiBold" Text="Saved missing device" />
-                                    <TextBlock TextWrapping="Wrap" Text="{CompiledBinding Identifier}" />
+                                    <TextBlock FontWeight="SemiBold" Text="{CompiledBinding DisplayName}" />
+                                    <TextBlock TextWrapping="Wrap" Opacity="0.6" Text="{CompiledBinding IdentityHint}" ToolTip.Tip="{CompiledBinding Identifier}" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Margin="15 0 0 0" Content="Remove" Command="{CompiledBinding ForgetDevice}" />
                             </Grid>

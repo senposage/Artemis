@@ -490,6 +490,8 @@ public class ArtemisDevice : CorePropertyChanged
         if (string.IsNullOrWhiteSpace(DeviceEntity.Id))
             DeviceEntity.Id = Identifier;
         DeviceEntity.DeviceProvider = DeviceProvider.Plugin.Guid.ToString();
+        string? deviceName = RgbDevice.DeviceInfo.DeviceName;
+        DeviceEntity.DisplayName = string.IsNullOrWhiteSpace(deviceName) ? null : deviceName[..Math.Min(deviceName.Length, 512)];
 
         DeviceEntity.InputIdentifiers.Clear();
         foreach (ArtemisDeviceInputIdentifier identifier in InputIdentifiers)
